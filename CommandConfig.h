@@ -26,6 +26,13 @@ struct SmsProfile
     std::wstring serviceCenter;
 };
 
+/// <summary>界面主题选项。</summary>
+enum class ThemeMode
+{
+    Light,
+    Dark
+};
+
 /// <summary>负责读取与写入指令配置文件。</summary>
 class CommandConfig
 {
@@ -50,6 +57,12 @@ public:
     /// <summary>设置短信配置。</summary>
     void SetSmsProfile(const SmsProfile& profile);
 
+    /// <summary>获取主题设置。</summary>
+    ThemeMode GetTheme() const noexcept;
+
+    /// <summary>设置主题。</summary>
+    void SetTheme(ThemeMode mode) noexcept;
+
 private:
     void EnsureDefaults();
     bool Parse(const std::wstring& xmlText);
@@ -59,4 +72,5 @@ private:
 private:
     std::vector<CommandItem> _commands;
     SmsProfile _smsProfile;
+    ThemeMode _theme;
 };

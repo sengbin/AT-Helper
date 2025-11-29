@@ -16,6 +16,19 @@
 #include <vector>
 #include <windows.h>
 
+/// <summary>界面配色定义。</summary>
+struct ThemePalette
+{
+    COLORREF windowBackground;
+    COLORREF controlBackground;
+    COLORREF textColor;
+    COLORREF logBackground;
+    COLORREF logTextColor;
+    COLORREF sendTextColor;
+    COLORREF receiveTextColor;
+    COLORREF borderColor;
+};
+
 /// <summary>负责管理主对话框及业务逻辑。</summary>
 class AppController
 {
@@ -52,6 +65,35 @@ private:
     void ReloadConfiguration();
     void ResetSessionCallbacks();
     std::filesystem::path ResolveConfigPath() const;
+    /// <summary>初始化主题下拉框。</summary>
+    void InitializeThemeSelector();
+    /// <summary>响应主题下拉框切换。</summary>
+    void OnThemeSelectionChanged();
+    /// <summary>根据主题刷新配色。</summary>
+    void ApplyTheme(ThemeMode mode);
+    /// <summary>刷新主题下拉框的选中状态。</summary>
+    void UpdateThemeComboSelection() const;
+    /// <summary>重建用于着色的画刷。</summary>
+    void RecreateThemeBrushes();
+    /// <summary>构造指定主题的配色参数。</summary>
+    ThemePalette BuildPalette(ThemeMode mode) const;
+    /// <summary>处理 WM_CTLCOLOR 类消息。</summary>
+    INT_PTR HandleThemeColorMessage(UINT message, WPARAM wParam, LPARAM lParam);
+    /// <summary>批量应用线框风格。</summary>
+    void ApplyFlatBorderToControls();
+    /// <summary>为指定控件添加线框。</summary>
+    void ApplyFlatBorderToControl(int controlId);
+    /// <summary>为任意窗口句柄应用线框。</summary>
+    void ApplyFlatBorderToWindow(HWND control, UINT_PTR subclassId = 0);
+    /// <summary>绘制自定义线框。</summary>
+    void DrawFlatBorder(HWND control) const;
+    /// <summary>判断子类化 ID 是否对应下拉框。</summary>
+    bool IsComboSubclassId(UINT_PTR subclassId) const;
+    /// <summary>绘制扁平风格下拉框。</summary>
+    void PaintFlatCombo(HWND combo, HDC targetDc) const;
+    /// <summary>获取下拉框当前文本。</summary>
+    std::wstring GetComboDisplayText(HWND combo) const;
+    static LRESULT CALLBACK FlatBorderSubclassProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR reference);
 
 private:
     HINSTANCE _instance;
@@ -64,6 +106,10 @@ private:
     SmsProfile _smsProfile;
     AtSession _session;
     HMODULE _richEditModule;
+    ThemeMode _themeMode;
+    ThemePalette _palette;
+    HBRUSH _dialogBrush;
+    HBRUSH _controlBrush;
 };
 
 /// <summary>WinMain 入口。</summary>

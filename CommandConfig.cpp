@@ -159,6 +159,11 @@ const SmsProfile& CommandConfig::GetSmsProfile() const noexcept
     return _smsProfile;
 }
 
+ThemeMode CommandConfig::GetTheme() const noexcept
+{
+    return _theme;
+}
+
 void CommandConfig::SetCommands(std::vector<CommandItem> commands)
 {
     _commands = std::move(commands);
@@ -167,6 +172,11 @@ void CommandConfig::SetCommands(std::vector<CommandItem> commands)
 void CommandConfig::SetSmsProfile(const SmsProfile& profile)
 {
     _smsProfile = profile;
+}
+
+void CommandConfig::SetTheme(ThemeMode mode) noexcept
+{
+    _theme = mode;
 }
 
 void CommandConfig::EnsureDefaults()
@@ -186,12 +196,14 @@ void CommandConfig::EnsureDefaults()
     };
     _smsProfile.targetNumber.clear();
     _smsProfile.serviceCenter.clear();
+    _theme = ThemeMode::Light;
 }
 
 bool CommandConfig::Parse(const std::wstring& xmlText)
 {
     std::vector<CommandItem> parsedCommands;
     SmsProfile parsedProfile = _smsProfile;
+    ThemeMode parsedTheme = _theme;
 
     const auto settingsPos = xmlText.find(L"<settings");
     if(settingsPos != std::wstring::npos) {
@@ -205,6 +217,19 @@ bool CommandConfig::Parse(const std::wstring& xmlText)
             std::wstring service;
             if(ExtractAttribute(node, L"serviceCenter", service) && !service.empty()) {
                 parsedProfile.serviceCenter = UnescapeXml(service);
+            }
+            std::wstring themeAttr;
+            if(ExtractAttribute(node, L"theme", themeAttr) && !themeAttr.empty()) {
+                std::wstring lowered = themeAttr;
+                std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](wchar_t ch)
+                {
+                    return static_cast<wchar_t>(std::towlower(static_cast<wint_t>(ch)));
+                });
+                if(lowered == L"dark") {
+                    parsedTheme = ThemeMode::Dark;
+                } else {
+                    parsedTheme = ThemeMode::Light;
+                }
             }
         }
     }
@@ -238,6 +263,7 @@ bool CommandConfig::Parse(const std::wstring& xmlText)
         _commands = std::move(parsedCommands);
     }
     _smsProfile = parsedProfile;
+    _theme = parsedTheme;
     return true;
 }
 
@@ -247,6 +273,7 @@ std::wstring CommandConfig::Serialize() const
     stream << L"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
     stream << L"<atHelper>\n";
     stream << L"  <settings";
+    stream << L" theme=\"" << (_theme == ThemeMode::Dark ? L"dark" : L"light") << L"\"";
     if(!_smsProfile.targetNumber.empty()) {
         stream << L" smsTarget=\"" << EscapeXml(_smsProfile.targetNumber) << L"\"";
     }

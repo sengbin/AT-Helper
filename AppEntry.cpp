@@ -12,10 +12,18 @@
 #include <algorithm>
 #include <array>
 #include <cwctype>
+#include <cwchar>
 #include <iterator>
 #include <sstream>
 #include <vector>
 #include <Richedit.h>
+#include <Commctrl.h>
+
+#pragma comment(lib, "Comctl32.lib")
+
+#ifndef WM_CTLCOLORCOMBOBOX
+#define WM_CTLCOLORCOMBOBOX 0x0134
+#endif
 
 namespace
 {
@@ -51,7 +59,8 @@ namespace
 }
 
 AppController::AppController()
-    : _instance(nullptr), _dialog(nullptr), _richEditModule(nullptr)
+    : _instance(nullptr), _dialog(nullptr), _richEditModule(nullptr),
+      _themeMode(ThemeMode::Light), _palette{}, _dialogBrush(nullptr), _controlBrush(nullptr)
 {
 }
 
@@ -65,11 +74,25 @@ AppController::~AppController()
         FreeLibrary(_richEditModule);
         _richEditModule = nullptr;
     }
+    if (_dialogBrush != nullptr)
+    {
+        DeleteObject(_dialogBrush);
+        _dialogBrush = nullptr;
+    }
+    if (_controlBrush != nullptr)
+    {
+        DeleteObject(_controlBrush);
+        _controlBrush = nullptr;
+    }
 }
 
 bool AppController::Initialize(HINSTANCE instance)
 {
     _instance = instance;
+    INITCOMMONCONTROLSEX controls{};
+    controls.dwSize = sizeof(controls);
+    controls.dwICC = ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&controls);
     if (_richEditModule == nullptr)
     {
         _richEditModule = LoadLibraryW(L"Msftedit.dll");
@@ -87,6 +110,8 @@ bool AppController::Initialize(HINSTANCE instance)
     _commands = _config.GetCommands();
     _smsProfile = _config.GetSmsProfile();
     _session.SetSmsProfile(_smsProfile);
+    _themeMode = _config.GetTheme();
+    ApplyTheme(_themeMode);
     return true;
 }
 
@@ -132,6 +157,10 @@ INT_PTR AppController::OnInitDialog(HWND hWnd)
         SendMessageW(logEdit, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&format));
     }
 
+    InitializeThemeSelector();
+    ApplyTheme(_themeMode);
+    ApplyFlatBorderToControls();
+
     HWND baudCombo = GetDlgItem(hWnd, IDC_COMBO_BAUD);
     const std::array<unsigned long, 5> baudRates{9600, 19200, 38400, 57600, 115200};
     for (unsigned long rate : baudRates)
@@ -164,6 +193,12 @@ INT_PTR AppController::HandleDialogMessage(HWND, UINT message, WPARAM wParam, LP
     case WM_APP_SMS_TEXT:
         HandleSmsPayload(reinterpret_cast<std::wstring*>(wParam));
         return TRUE;
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    case WM_CTLCOLORBTN:
+        return HandleThemeColorMessage(message, wParam, lParam);
     default:
         break;
     }
@@ -239,6 +274,12 @@ void AppController::HandleCommand(WPARAM wParam, LPARAM lParam)
         if (notify == BN_CLICKED)
         {
             SetDlgItemTextW(_dialog, IDC_EDIT_LOG, L"");
+        }
+        break;
+    case IDC_COMBO_THEME:
+        if (notify == CBN_SELCHANGE)
+        {
+            OnThemeSelectionChanged();
         }
         break;
     case IDC_COMMAND_LIST:
@@ -383,13 +424,13 @@ COLORREF AppController::ResolveLogColor(const std::wstring& text) const
 {
     if (text.rfind(L"--> ", 0) == 0)
     {
-        return RGB(0, 120, 215);
+        return _palette.sendTextColor;
     }
     if (text.rfind(L"<-- ", 0) == 0)
     {
-        return RGB(0, 153, 0);
+        return _palette.receiveTextColor;
     }
-    return GetSysColor(COLOR_WINDOWTEXT);
+    return _palette.logTextColor;
 }
 
 void AppController::SetStatus(const std::wstring& text)
@@ -512,6 +553,8 @@ void AppController::ReloadConfiguration()
         MessageBoxW(_dialog, L"重新加载配置失败", L"AT Helper", MB_OK | MB_ICONWARNING);
     }
     _smsProfile = _config.GetSmsProfile();
+    _themeMode = _config.GetTheme();
+    ApplyTheme(_themeMode);
     RefreshCommandList();
     AppendLog(L"已重新加载指令配置");
 }
@@ -530,7 +573,6 @@ void AppController::ResetSessionCallbacks()
             delete payload;
         }
     });
-
     _session.SetSmsCallback([this](const std::wstring& header, const std::wstring& content)
     {
         if (_dialog == nullptr)
@@ -543,6 +585,465 @@ void AppController::ResetSessionCallbacks()
             delete payload;
         }
     });
+}
+
+void AppController::InitializeThemeSelector()
+{
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+    HWND combo = GetDlgItem(_dialog, IDC_COMBO_THEME);
+    if (!combo)
+    {
+        return;
+    }
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"浅色主题"));
+    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"深色主题"));
+    UpdateThemeComboSelection();
+}
+
+void AppController::OnThemeSelectionChanged()
+{
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+    HWND combo = GetDlgItem(_dialog, IDC_COMBO_THEME);
+    if (!combo)
+    {
+        return;
+    }
+    const int selection = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+    if (selection < 0)
+    {
+        return;
+    }
+    const ThemeMode desired = (selection == 1) ? ThemeMode::Dark : ThemeMode::Light;
+    if (desired == _themeMode)
+    {
+        return;
+    }
+    ApplyTheme(desired);
+    _config.SetTheme(desired);
+    _config.Save(_configPath);
+}
+
+void AppController::ApplyTheme(ThemeMode mode)
+{
+    _themeMode = mode;
+    _palette = BuildPalette(mode);
+    RecreateThemeBrushes();
+
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+
+    UpdateThemeComboSelection();
+    ApplyFlatBorderToControls();
+
+    HWND logEdit = GetDlgItem(_dialog, IDC_EDIT_LOG);
+    if (logEdit)
+    {
+        SendMessageW(logEdit, EM_SETBKGNDCOLOR, 0, _palette.logBackground);
+        InvalidateRect(logEdit, nullptr, TRUE);
+    }
+
+    const std::array<int, 13> themedControls{
+        IDC_COMMAND_LIST,
+        IDC_EDIT_COMMAND,
+        IDC_EDIT_SMS_NUMBER,
+        IDC_EDIT_SMS_TEXT,
+        IDC_COMBO_PORT,
+        IDC_COMBO_BAUD,
+        IDC_COMBO_THEME,
+        IDC_STATUS_TEXT,
+        IDC_BUTTON_CONNECT,
+        IDC_BUTTON_RELOAD,
+        IDC_BUTTON_CLEAR_LOG,
+        IDC_BUTTON_SEND_COMMAND,
+        IDC_BUTTON_SEND_SMS
+    };
+    for (int id : themedControls)
+    {
+        HWND control = GetDlgItem(_dialog, id);
+        if (control)
+        {
+            InvalidateRect(control, nullptr, TRUE);
+        }
+    }
+
+    InvalidateRect(_dialog, nullptr, TRUE);
+}
+
+void AppController::UpdateThemeComboSelection() const
+{
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+    HWND combo = GetDlgItem(_dialog, IDC_COMBO_THEME);
+    if (!combo)
+    {
+        return;
+    }
+    const int targetIndex = (_themeMode == ThemeMode::Dark) ? 1 : 0;
+    SendMessageW(combo, CB_SETCURSEL, targetIndex, 0);
+}
+
+void AppController::RecreateThemeBrushes()
+{
+    if (_dialogBrush != nullptr)
+    {
+        DeleteObject(_dialogBrush);
+        _dialogBrush = nullptr;
+    }
+    if (_controlBrush != nullptr)
+    {
+        DeleteObject(_controlBrush);
+        _controlBrush = nullptr;
+    }
+    _dialogBrush = CreateSolidBrush(_palette.windowBackground);
+    _controlBrush = CreateSolidBrush(_palette.controlBackground);
+}
+
+ThemePalette AppController::BuildPalette(ThemeMode mode) const
+{
+    ThemePalette palette{};
+    if (mode == ThemeMode::Dark)
+    {
+        palette.windowBackground = RGB(28, 28, 28);
+        palette.controlBackground = RGB(45, 45, 45);
+        palette.textColor = RGB(230, 230, 230);
+        palette.logBackground = RGB(20, 20, 20);
+        palette.logTextColor = RGB(235, 235, 235);
+        palette.sendTextColor = RGB(120, 180, 255);
+        palette.receiveTextColor = RGB(160, 235, 160);
+        palette.borderColor = RGB(96, 96, 96);
+    }
+    else
+    {
+        palette.windowBackground = RGB(244, 246, 249);
+        palette.controlBackground = RGB(255, 255, 255);
+        palette.textColor = RGB(32, 32, 32);
+        palette.logBackground = RGB(255, 255, 255);
+        palette.logTextColor = RGB(32, 32, 32);
+        palette.sendTextColor = RGB(0, 120, 215);
+        palette.receiveTextColor = RGB(0, 153, 0);
+        palette.borderColor = RGB(180, 186, 194);
+    }
+    return palette;
+}
+
+INT_PTR AppController::HandleThemeColorMessage(UINT message, WPARAM wParam, LPARAM lParam)
+{
+    HDC hdc = reinterpret_cast<HDC>(wParam);
+    HWND control = reinterpret_cast<HWND>(lParam);
+    switch (message)
+    {
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+        SetBkColor(hdc, _palette.windowBackground);
+        SetTextColor(hdc, _palette.textColor);
+        return reinterpret_cast<INT_PTR>(_dialogBrush ? _dialogBrush : GetStockObject(WHITE_BRUSH));
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+        SetBkColor(hdc, _palette.controlBackground);
+        SetTextColor(hdc, _palette.textColor);
+        return reinterpret_cast<INT_PTR>(_controlBrush ? _controlBrush : GetStockObject(WHITE_BRUSH));
+    default:
+        break;
+    }
+    return FALSE;
+}
+
+void AppController::ApplyFlatBorderToControls()
+{
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+    const std::array<int, 8> borderControls{
+        IDC_COMMAND_LIST,
+        IDC_EDIT_LOG,
+        IDC_EDIT_COMMAND,
+        IDC_EDIT_SMS_NUMBER,
+        IDC_EDIT_SMS_TEXT,
+        IDC_COMBO_PORT,
+        IDC_COMBO_BAUD,
+        IDC_COMBO_THEME
+    };
+    for (int id : borderControls)
+    {
+        ApplyFlatBorderToControl(id);
+    }
+}
+
+void AppController::ApplyFlatBorderToControl(int controlId)
+{
+    if (_dialog == nullptr)
+    {
+        return;
+    }
+    HWND control = GetDlgItem(_dialog, controlId);
+    if (!control)
+    {
+        return;
+    }
+    ApplyFlatBorderToWindow(control, static_cast<UINT_PTR>(controlId));
+
+    wchar_t className[32]{};
+    if (GetClassNameW(control, className, static_cast<int>(std::size(className))) <= 0)
+    {
+        return;
+    }
+    if (_wcsicmp(className, L"ComboBox") != 0)
+    {
+        return;
+    }
+
+    COMBOBOXINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetComboBoxInfo(control, &info))
+    {
+        if (info.hwndList)
+        {
+            ApplyFlatBorderToWindow(info.hwndList);
+        }
+        if (info.hwndItem)
+        {
+            ApplyFlatBorderToWindow(info.hwndItem);
+        }
+    }
+}
+
+void AppController::ApplyFlatBorderToWindow(HWND control, UINT_PTR subclassId)
+{
+    if (control == nullptr)
+    {
+        return;
+    }
+    if (subclassId == 0)
+    {
+        subclassId = reinterpret_cast<UINT_PTR>(control);
+    }
+    RemoveWindowSubclass(control, FlatBorderSubclassProc, subclassId);
+    LONG_PTR style = GetWindowLongPtrW(control, GWL_STYLE);
+    style &= ~WS_BORDER;
+    SetWindowLongPtrW(control, GWL_STYLE, style);
+    LONG_PTR exStyle = GetWindowLongPtrW(control, GWL_EXSTYLE);
+    exStyle &= ~WS_EX_CLIENTEDGE;
+    SetWindowLongPtrW(control, GWL_EXSTYLE, exStyle);
+    SetWindowPos(control, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+    SetWindowSubclass(control, FlatBorderSubclassProc, subclassId, reinterpret_cast<DWORD_PTR>(this));
+    DrawFlatBorder(control);
+}
+
+void AppController::DrawFlatBorder(HWND control) const
+{
+    if (control == nullptr)
+    {
+        return;
+    }
+    HDC windowDc = GetWindowDC(control);
+    if (!windowDc)
+    {
+        return;
+    }
+    RECT rect{};
+    GetWindowRect(control, &rect);
+    OffsetRect(&rect, -rect.left, -rect.top);
+    const HBRUSH brush = CreateSolidBrush(_palette.borderColor);
+    if (brush != nullptr)
+    {
+        FrameRect(windowDc, &rect, brush);
+        DeleteObject(brush);
+    }
+    ReleaseDC(control, windowDc);
+}
+
+bool AppController::IsComboSubclassId(UINT_PTR subclassId) const
+{
+    return subclassId == IDC_COMBO_PORT || subclassId == IDC_COMBO_BAUD || subclassId == IDC_COMBO_THEME;
+}
+
+void AppController::PaintFlatCombo(HWND combo, HDC targetDc) const
+{
+    if (combo == nullptr || targetDc == nullptr)
+    {
+        return;
+    }
+
+    RECT client{};
+    GetClientRect(combo, &client);
+    const int width = client.right - client.left;
+    const int height = client.bottom - client.top;
+    if (width <= 0 || height <= 0)
+    {
+        return;
+    }
+
+    HDC bufferDc = CreateCompatibleDC(targetDc);
+    HBITMAP bufferBmp = CreateCompatibleBitmap(targetDc, width, height);
+    HBITMAP oldBmp = nullptr;
+    if (bufferDc == nullptr || bufferBmp == nullptr)
+    {
+        if (bufferDc)
+        {
+            DeleteDC(bufferDc);
+        }
+        if (bufferBmp)
+        {
+            DeleteObject(bufferBmp);
+        }
+        bufferDc = nullptr;
+    }
+    else
+    {
+        oldBmp = static_cast<HBITMAP>(SelectObject(bufferDc, bufferBmp));
+    }
+    HDC drawDc = bufferDc != nullptr ? bufferDc : targetDc;
+
+    const bool enabled = IsWindowEnabled(combo) != FALSE;
+    const bool hasFocus = GetFocus() == combo;
+    const bool dropped = SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != 0;
+    COLORREF fillColor = _palette.controlBackground;
+    if (hasFocus || dropped)
+    {
+        fillColor = (_themeMode == ThemeMode::Dark) ? RGB(55, 55, 55) : RGB(225, 235, 250);
+    }
+    const COLORREF textColor = enabled ? _palette.textColor : RGB(160, 160, 160);
+    const COLORREF arrowColor = textColor;
+
+    HBRUSH fillBrush = CreateSolidBrush(fillColor);
+    FillRect(drawDc, &client, fillBrush);
+    DeleteObject(fillBrush);
+
+    SetBkMode(drawDc, TRANSPARENT);
+    SetTextColor(drawDc, textColor);
+
+    const int sysButtonWidth = GetSystemMetrics(SM_CXVSCROLL);
+    const int buttonWidth = (sysButtonWidth > 16) ? sysButtonWidth : 16;
+    RECT textRect = client;
+    textRect.left += 6;
+    const int candidateRight = textRect.right - buttonWidth - 4;
+    textRect.right = (candidateRight > textRect.left) ? candidateRight : textRect.left;
+
+    std::wstring text = GetComboDisplayText(combo);
+    if (!text.empty())
+    {
+        DrawTextW(drawDc, text.c_str(), static_cast<int>(text.size()), &textRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+    }
+
+    RECT buttonRect = client;
+    buttonRect.left = buttonRect.right - buttonWidth;
+    HBRUSH buttonBrush = CreateSolidBrush((_themeMode == ThemeMode::Dark) ? RGB(70, 70, 70) : RGB(242, 244, 247));
+    FillRect(drawDc, &buttonRect, buttonBrush);
+    DeleteObject(buttonBrush);
+
+    POINT arrow[3]{};
+    const int centerX = (buttonRect.left + buttonRect.right) / 2;
+    const int centerY = (buttonRect.top + buttonRect.bottom) / 2;
+    const int size = 4;
+    arrow[0] = {centerX - size, centerY - 1};
+    arrow[1] = {centerX + size, centerY - 1};
+    arrow[2] = {centerX, centerY + size};
+    HPEN pen = CreatePen(PS_SOLID, 1, arrowColor);
+    HBRUSH arrowBrush = CreateSolidBrush(arrowColor);
+    const HPEN oldPen = static_cast<HPEN>(SelectObject(drawDc, pen));
+    const HBRUSH oldBrush = static_cast<HBRUSH>(SelectObject(drawDc, arrowBrush));
+    Polygon(drawDc, arrow, 3);
+    SelectObject(drawDc, oldPen);
+    SelectObject(drawDc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(arrowBrush);
+
+    if (bufferDc != nullptr)
+    {
+        BitBlt(targetDc, 0, 0, width, height, bufferDc, 0, 0, SRCCOPY);
+        SelectObject(bufferDc, oldBmp);
+        DeleteObject(bufferBmp);
+        DeleteDC(bufferDc);
+    }
+}
+
+std::wstring AppController::GetComboDisplayText(HWND combo) const
+{
+    int length = GetWindowTextLengthW(combo);
+    if (length > 0)
+    {
+        std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+        GetWindowTextW(combo, text.data(), length + 1);
+        text.resize(length);
+        return text;
+    }
+    const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+    if (index >= 0)
+    {
+        const LRESULT lbLength = SendMessageW(combo, CB_GETLBTEXTLEN, index, 0);
+        if (lbLength > 0)
+        {
+            std::wstring text(static_cast<std::size_t>(lbLength) + 1, L'\0');
+            SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(text.data()));
+            text.resize(lbLength);
+            return text;
+        }
+    }
+    return std::wstring();
+}
+
+LRESULT CALLBACK AppController::FlatBorderSubclassProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR reference)
+{
+    auto* controller = reinterpret_cast<AppController*>(reference);
+
+    if (controller != nullptr && controller->IsComboSubclassId(subclassId))
+    {
+        switch (message)
+        {
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hWnd, &ps);
+            controller->PaintFlatCombo(hWnd, dc);
+            EndPaint(hWnd, &ps);
+            controller->DrawFlatBorder(hWnd);
+            return 0;
+        }
+        case WM_PRINTCLIENT:
+            controller->PaintFlatCombo(hWnd, reinterpret_cast<HDC>(wParam));
+            controller->DrawFlatBorder(hWnd);
+            return 0;
+        default:
+            break;
+        }
+    }
+
+    if (message == WM_NCDESTROY)
+    {
+        RemoveWindowSubclass(hWnd, FlatBorderSubclassProc, subclassId);
+        return DefSubclassProc(hWnd, message, wParam, lParam);
+    }
+
+    if (message == WM_NCPAINT)
+    {
+        if (controller != nullptr)
+        {
+            controller->DrawFlatBorder(hWnd);
+        }
+        return 0;
+    }
+
+    const LRESULT result = DefSubclassProc(hWnd, message, wParam, lParam);
+    if (controller != nullptr && (message == WM_PAINT || message == WM_THEMECHANGED || message == WM_SETFOCUS || message == WM_KILLFOCUS))
+    {
+        controller->DrawFlatBorder(hWnd);
+    }
+    return result;
 }
 
 std::filesystem::path AppController::ResolveConfigPath() const

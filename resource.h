@@ -23,6 +23,7 @@
 #define IDC_BUTTON_RELOAD          1011
 #define IDC_COMBO_BAUD             1012
 #define IDC_BUTTON_CLEAR_LOG       1013
+#define IDC_COMBO_THEME             1014
 
 #ifndef IDC_STATIC
 #define IDC_STATIC                 -1
