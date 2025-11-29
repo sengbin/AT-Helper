@@ -20,13 +20,11 @@ namespace
     {
         const auto size = value.size();
         std::size_t start = 0;
-        while (start < size && std::iswspace(static_cast<wint_t>(value[start])) != 0)
-        {
+        while(start < size && std::iswspace(static_cast<wint_t>(value[start])) != 0) {
             ++start;
         }
         std::size_t end = size;
-        while (end > start && std::iswspace(static_cast<wint_t>(value[end - 1])) != 0)
-        {
+        while(end > start && std::iswspace(static_cast<wint_t>(value[end - 1])) != 0) {
             --end;
         }
         return value.substr(start, end - start);
@@ -34,13 +32,11 @@ namespace
 
     std::wstring Utf8ToWide(const std::string& text)
     {
-        if (text.empty())
-        {
+        if(text.empty()) {
             return std::wstring();
         }
         const int needed = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-        if (needed <= 0)
-        {
+        if(needed <= 0) {
             return std::wstring();
         }
         std::wstring buffer(static_cast<std::size_t>(needed), L'\0');
@@ -50,13 +46,11 @@ namespace
 
     std::string WideToUtf8(const std::wstring& text)
     {
-        if (text.empty())
-        {
+        if(text.empty()) {
             return std::string();
         }
         const int needed = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-        if (needed <= 0)
-        {
+        if(needed <= 0) {
             return std::string();
         }
         std::string buffer(static_cast<std::size_t>(needed), '\0');
@@ -68,14 +62,12 @@ namespace
     {
         const std::wstring token = attribute + L"=\"";
         const auto start = node.find(token);
-        if (start == std::wstring::npos)
-        {
+        if(start == std::wstring::npos) {
             return false;
         }
         const auto valueStart = start + token.size();
         const auto end = node.find(L"\"", valueStart);
-        if (end == std::wstring::npos)
-        {
+        if(end == std::wstring::npos) {
             return false;
         }
         value = node.substr(valueStart, end - valueStart);
@@ -86,42 +78,27 @@ namespace
     {
         std::wstring result;
         result.reserve(value.size());
-        for (std::size_t i = 0; i < value.size(); ++i)
-        {
-            if (value[i] == L'&')
-            {
-                if (value.compare(i, 5, L"&amp;") == 0)
-                {
+        for(std::size_t i = 0; i < value.size(); ++i) {
+            if(value[i] == L'&') {
+                if(value.compare(i, 5, L"&amp;") == 0) {
                     result.push_back(L'&');
                     i += 4;
-                }
-                else if (value.compare(i, 4, L"&lt;") == 0)
-                {
+                } else if(value.compare(i, 4, L"&lt;") == 0) {
                     result.push_back(L'<');
                     i += 3;
-                }
-                else if (value.compare(i, 4, L"&gt;") == 0)
-                {
+                } else if(value.compare(i, 4, L"&gt;") == 0) {
                     result.push_back(L'>');
                     i += 3;
-                }
-                else if (value.compare(i, 6, L"&quot;") == 0)
-                {
+                } else if(value.compare(i, 6, L"&quot;") == 0) {
                     result.push_back(L'\"');
                     i += 5;
-                }
-                else if (value.compare(i, 5, L"&apos;") == 0)
-                {
+                } else if(value.compare(i, 5, L"&apos;") == 0) {
                     result.push_back(L'\'');
                     i += 4;
-                }
-                else
-                {
+                } else {
                     result.push_back(value[i]);
                 }
-            }
-            else
-            {
+            } else {
                 result.push_back(value[i]);
             }
         }
@@ -138,27 +115,23 @@ bool CommandConfig::Load(const std::filesystem::path& filePath)
 {
     EnsureDefaults();
     std::error_code status;
-    if (!std::filesystem::exists(filePath, status))
-    {
+    if(!std::filesystem::exists(filePath, status)) {
         return Save(filePath);
     }
 
     std::ifstream input(filePath, std::ios::binary);
-    if (!input)
-    {
+    if(!input) {
         return false;
     }
     std::ostringstream buffer;
     buffer << input.rdbuf();
     const std::string raw = buffer.str();
-    if (raw.empty())
-    {
+    if(raw.empty()) {
         EnsureDefaults();
         return Save(filePath);
     }
 
-    if (!Parse(Utf8ToWide(raw)))
-    {
+    if(!Parse(Utf8ToWide(raw))) {
         EnsureDefaults();
         return Save(filePath);
     }
@@ -168,8 +141,7 @@ bool CommandConfig::Load(const std::filesystem::path& filePath)
 bool CommandConfig::Save(const std::filesystem::path& filePath) const
 {
     std::ofstream output(filePath, std::ios::binary | std::ios::trunc);
-    if (!output)
-    {
+    if(!output) {
         return false;
     }
     const auto xml = Serialize();
@@ -203,11 +175,17 @@ void CommandConfig::EnsureDefaults()
         {L"AT", L"模块握手"},
         {L"AT+CSQ", L"查询信号质量"},
         {L"AT+CREG?", L"查询网络注册"},
+        {L"",L""},
         {L"AT+CMGF=1", L"设置短信文本模式"},
-        {L"AT+CMGL=\"REC UNREAD\"", L"读取未读短信"}
+        {L"AT+CSCA?", L"查询短信服务中心号码"},
+        {L"AT+CMGL=\"REC UNREAD\"", L"读取未读短信"},
+        {L"AT+CMGL = \"ALL\"",L"读取所有短信" },
+        {L"",L""},
+        {L"AT&F", L"模块出厂化" },
+        {L"AT+CFUN=1,1", L"重启模块" },
     };
-    _smsProfile.targetNumber = L"+8613800138000";
-    _smsProfile.serviceCenter = L"+8613800755000";
+    _smsProfile.targetNumber.clear();
+    _smsProfile.serviceCenter.clear();
 }
 
 bool CommandConfig::Parse(const std::wstring& xmlText)
@@ -216,44 +194,36 @@ bool CommandConfig::Parse(const std::wstring& xmlText)
     SmsProfile parsedProfile = _smsProfile;
 
     const auto settingsPos = xmlText.find(L"<settings");
-    if (settingsPos != std::wstring::npos)
-    {
+    if(settingsPos != std::wstring::npos) {
         const auto closePos = xmlText.find(L"/>", settingsPos);
-        if (closePos != std::wstring::npos)
-        {
+        if(closePos != std::wstring::npos) {
             const auto node = xmlText.substr(settingsPos, closePos - settingsPos + 2);
             std::wstring target;
-            if (ExtractAttribute(node, L"smsTarget", target) && !target.empty())
-            {
+            if(ExtractAttribute(node, L"smsTarget", target) && !target.empty()) {
                 parsedProfile.targetNumber = UnescapeXml(target);
             }
             std::wstring service;
-            if (ExtractAttribute(node, L"serviceCenter", service) && !service.empty())
-            {
+            if(ExtractAttribute(node, L"serviceCenter", service) && !service.empty()) {
                 parsedProfile.serviceCenter = UnescapeXml(service);
             }
         }
     }
 
     std::size_t search = 0;
-    while (true)
-    {
+    while(true) {
         const auto start = xmlText.find(L"<command", search);
-        if (start == std::wstring::npos)
-        {
+        if(start == std::wstring::npos) {
             break;
         }
         auto end = xmlText.find(L"/>", start);
-        if (end == std::wstring::npos)
-        {
+        if(end == std::wstring::npos) {
             break;
         }
         const auto node = xmlText.substr(start, end - start + 2);
         search = end + 2;
 
         std::wstring textAttr;
-        if (!ExtractAttribute(node, L"text", textAttr))
-        {
+        if(!ExtractAttribute(node, L"text", textAttr)) {
             continue;
         }
         std::wstring summaryAttr;
@@ -264,8 +234,7 @@ bool CommandConfig::Parse(const std::wstring& xmlText)
         parsedCommands.push_back(std::move(item));
     }
 
-    if (!parsedCommands.empty())
-    {
+    if(!parsedCommands.empty()) {
         _commands = std::move(parsedCommands);
     }
     _smsProfile = parsedProfile;
@@ -277,13 +246,18 @@ std::wstring CommandConfig::Serialize() const
     std::wostringstream stream;
     stream << L"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
     stream << L"<atHelper>\n";
-    stream << L"  <settings smsTarget=\"" << EscapeXml(_smsProfile.targetNumber)
-           << L"\" serviceCenter=\"" << EscapeXml(_smsProfile.serviceCenter) << L"\" />\n";
+    stream << L"  <settings";
+    if(!_smsProfile.targetNumber.empty()) {
+        stream << L" smsTarget=\"" << EscapeXml(_smsProfile.targetNumber) << L"\"";
+    }
+    if(!_smsProfile.serviceCenter.empty()) {
+        stream << L" serviceCenter=\"" << EscapeXml(_smsProfile.serviceCenter) << L"\"";
+    }
+    stream << L" />\n";
     stream << L"  <commands>\n";
-    for (const auto& cmd : _commands)
-    {
+    for(const auto& cmd : _commands) {
         stream << L"    <command text=\"" << EscapeXml(cmd.text)
-               << L"\" summary=\"" << EscapeXml(cmd.summary) << L"\" />\n";
+            << L"\" summary=\"" << EscapeXml(cmd.summary) << L"\" />\n";
     }
     stream << L"  </commands>\n";
     stream << L"</atHelper>\n";
@@ -294,28 +268,26 @@ std::wstring CommandConfig::EscapeXml(const std::wstring& value)
 {
     std::wstring escaped;
     escaped.reserve(value.size());
-    for (const auto ch : value)
-    {
-        switch (ch)
-        {
-        case L'&':
-            escaped.append(L"&amp;");
-            break;
-        case L'\"':
-            escaped.append(L"&quot;");
-            break;
-        case L'\'':
-            escaped.append(L"&apos;");
-            break;
-        case L'<':
-            escaped.append(L"&lt;");
-            break;
-        case L'>':
-            escaped.append(L"&gt;");
-            break;
-        default:
-            escaped.push_back(ch);
-            break;
+    for(const auto ch : value) {
+        switch(ch) {
+            case L'&':
+                escaped.append(L"&amp;");
+                break;
+            case L'\"':
+                escaped.append(L"&quot;");
+                break;
+            case L'\'':
+                escaped.append(L"&apos;");
+                break;
+            case L'<':
+                escaped.append(L"&lt;");
+                break;
+            case L'>':
+                escaped.append(L"&gt;");
+                break;
+            default:
+                escaped.push_back(ch);
+                break;
         }
     }
     return escaped;

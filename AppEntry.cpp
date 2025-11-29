@@ -15,6 +15,7 @@
 #include <iterator>
 #include <sstream>
 #include <vector>
+#include <Richedit.h>
 
 namespace
 {
@@ -50,7 +51,7 @@ namespace
 }
 
 AppController::AppController()
-    : _instance(nullptr), _dialog(nullptr)
+    : _instance(nullptr), _dialog(nullptr), _richEditModule(nullptr)
 {
 }
 
@@ -59,11 +60,25 @@ AppController::~AppController()
     _session.SetLogCallback(nullptr);
     _session.SetSmsCallback(nullptr);
     _session.Disconnect();
+    if (_richEditModule != nullptr)
+    {
+        FreeLibrary(_richEditModule);
+        _richEditModule = nullptr;
+    }
 }
 
 bool AppController::Initialize(HINSTANCE instance)
 {
     _instance = instance;
+    if (_richEditModule == nullptr)
+    {
+        _richEditModule = LoadLibraryW(L"Msftedit.dll");
+        if (_richEditModule == nullptr)
+        {
+            MessageBoxW(nullptr, L"无法加载 Msftedit.dll，无法显示彩色日志", L"AT Helper", MB_ICONERROR | MB_OK);
+            return false;
+        }
+    }
     _configPath = ResolveConfigPath();
     if (!_config.Load(_configPath))
     {
@@ -105,6 +120,17 @@ INT_PTR AppController::OnInitDialog(HWND hWnd)
 {
     CenterWindow(hWnd);
     ResetSessionCallbacks();
+
+    HWND logEdit = GetDlgItem(hWnd, IDC_EDIT_LOG);
+    if (logEdit)
+    {
+        PARAFORMAT2 format{};
+        format.cbSize = sizeof(format);
+        format.dwMask = PFM_LINESPACING;
+        format.bLineSpacingRule = 4; // 精确行距
+        format.dyLineSpacing = 220;   // 略小于默认行距
+        SendMessageW(logEdit, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&format));
+    }
 
     HWND baudCombo = GetDlgItem(hWnd, IDC_COMBO_BAUD);
     const std::array<unsigned long, 5> baudRates{9600, 19200, 38400, 57600, 115200};
@@ -320,16 +346,50 @@ void AppController::AppendLog(const std::wstring& text)
     {
         return;
     }
+
+    const COLORREF color = ResolveLogColor(text);
     const int length = GetWindowTextLengthW(edit);
     SendMessageW(edit, EM_SETSEL, length, length);
-    std::wstring line = text;
+
+    CHARFORMAT2W format{};
+    format.cbSize = sizeof(format);
+    format.dwMask = CFM_COLOR;
+    format.crTextColor = color;
+    SendMessageW(edit, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&format));
+
+    std::wstring line;
+    if (text.rfind(L"--> ", 0) == 0 && length > 0)
+    {
+        line.append(L"\r\n");
+    }
+    line.append(text);
     line.append(L"\r\n");
     SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(line.c_str()));
-    if (length > 60000)
+
+    const int newLength = GetWindowTextLengthW(edit);
+    if (newLength > 60000)
     {
         SendMessageW(edit, EM_SETSEL, 0, 20000);
         SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L""));
     }
+
+    const int finalLength = GetWindowTextLengthW(edit);
+    SendMessageW(edit, EM_SETSEL, finalLength, finalLength);
+    SendMessageW(edit, EM_SCROLLCARET, 0, 0);
+    SendMessageW(edit, WM_VSCROLL, SB_BOTTOM, 0);
+}
+
+COLORREF AppController::ResolveLogColor(const std::wstring& text) const
+{
+    if (text.rfind(L"--> ", 0) == 0)
+    {
+        return RGB(0, 120, 215);
+    }
+    if (text.rfind(L"<-- ", 0) == 0)
+    {
+        return RGB(0, 153, 0);
+    }
+    return GetSysColor(COLOR_WINDOWTEXT);
 }
 
 void AppController::SetStatus(const std::wstring& text)

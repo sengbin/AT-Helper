@@ -9,6 +9,7 @@
 #include "AtSession.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cwctype>
 #include <thread>
@@ -47,6 +48,7 @@ bool AtSession::Connect(const std::wstring& portName, unsigned long baudRate)
     Disconnect();
     _lineBuffer.clear();
     _waitingSmsContent = false;
+    _pendingEchoes.clear();
     _port.SetDataHandler([this](const std::string& chunk)
     {
         HandleIncoming(chunk);
@@ -57,6 +59,7 @@ bool AtSession::Connect(const std::wstring& portName, unsigned long baudRate)
         return false;
     }
     AppendLog(L"已连接 " + portName + L" 串口");
+    ConfigureAfterConnect();
     return true;
 }
 
@@ -68,6 +71,7 @@ void AtSession::Disconnect()
         _port.Close();
         AppendLog(L"串口已断开");
     }
+    _pendingEchoes.clear();
 }
 
 bool AtSession::IsConnected() const noexcept
@@ -99,6 +103,11 @@ bool AtSession::SendCommand(const std::wstring& commandText)
     if (_port.Write(buffer))
     {
         AppendLog(L"--> " + trimmed);
+        _pendingEchoes.push_back(trimmed);
+        if (_pendingEchoes.size() > 32)
+        {
+            _pendingEchoes.pop_front();
+        }
         return true;
     }
     return false;
@@ -164,11 +173,6 @@ void AtSession::SetSmsCallback(SmsCallback callback)
 
 void AtSession::HandleIncoming(const std::string& chunk)
 {
-    const auto text = Utf8ToWide(chunk);
-    if (!text.empty())
-    {
-        AppendLog(L"<-- " + text);
-    }
     _lineBuffer.append(chunk);
     const std::string delimiter = "\r\n";
     while (true)
@@ -190,10 +194,25 @@ void AtSession::HandleIncoming(const std::string& chunk)
 
 void AtSession::ProcessLine(const std::wstring& line)
 {
-    if (line.rfind(L"+CMT:", 0) == 0)
+    const std::wstring normalized = Trim(line);
+    if (normalized.empty())
+    {
+        return;
+    }
+    if (!_pendingEchoes.empty() && normalized == _pendingEchoes.front())
+    {
+        _pendingEchoes.pop_front();
+        return;
+    }
+    if (normalized.rfind(L"+CMT:", 0) == 0 || normalized.rfind(L"+CMGR:", 0) == 0)
     {
         _waitingSmsContent = true;
-        _lastSmsHeader = line;
+        _lastSmsHeader = normalized;
+        return;
+    }
+    if (normalized.rfind(L"+CMTI:", 0) == 0)
+    {
+        HandleCmtiNotification(normalized);
         return;
     }
     if (_waitingSmsContent)
@@ -210,6 +229,45 @@ void AtSession::ProcessLine(const std::wstring& line)
         }
         AppendLog(L"收到短信: " + line);
         return;
+    }
+    AppendLog(L"<-- " + normalized);
+}
+
+void AtSession::ConfigureAfterConnect()
+{
+    static const std::array<std::wstring, 3> commands{
+        L"AT",
+        L"AT+CMGF=1",
+        L"AT+CNMI=2,1,0,0,0"
+    };
+    for (const auto& command : commands)
+    {
+        if (!SendCommand(command))
+        {
+            AppendLog(L"初始化指令发送失败: " + command);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+}
+
+void AtSession::HandleCmtiNotification(const std::wstring& line)
+{
+    const auto comma = line.rfind(L',');
+    if (comma == std::wstring::npos)
+    {
+        AppendLog(L"CMTI 通知格式异常: " + line);
+        return;
+    }
+    std::wstring indexText = Trim(line.substr(comma + 1));
+    if (indexText.empty())
+    {
+        AppendLog(L"CMTI 通知缺少索引: " + line);
+        return;
+    }
+    AppendLog(L"检测到新短信，读取索引 " + indexText);
+    if (!SendCommand(L"AT+CMGR=" + indexText))
+    {
+        AppendLog(L"自动读取短信失败: " + indexText);
     }
 }
 

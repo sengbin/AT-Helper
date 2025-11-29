@@ -11,6 +11,7 @@
 #include "CommandConfig.h"
 #include "SerialPort.h"
 
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -53,6 +54,8 @@ private:
     void AttachCallbacks();
     void HandleIncoming(const std::string& chunk);
     void ProcessLine(const std::wstring& line);
+    void ConfigureAfterConnect();
+    void HandleCmtiNotification(const std::wstring& line);
     static std::wstring Utf8ToWide(const std::string& text);
     static std::string WideToUtf8(const std::wstring& text);
     void AppendLog(const std::wstring& line);
@@ -66,4 +69,5 @@ private:
     std::string _lineBuffer;
     std::wstring _lastSmsHeader;
     bool _waitingSmsContent;
+    std::deque<std::wstring> _pendingEchoes;
 };

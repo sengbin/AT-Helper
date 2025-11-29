@@ -41,6 +41,7 @@ private:
     void RefreshCommandList();
     void RefreshPortList();
     void AppendLog(const std::wstring& text);
+    COLORREF ResolveLogColor(const std::wstring& text) const;
     void SetStatus(const std::wstring& text);
     bool TryConnectSelectedPort();
     void DisconnectPort();
@@ -62,6 +63,7 @@ private:
     std::vector<CommandItem> _commands;
     SmsProfile _smsProfile;
     AtSession _session;
+    HMODULE _richEditModule;
 };
 
 /// <summary>WinMain 入口。</summary>
