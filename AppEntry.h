@@ -27,6 +27,12 @@ struct ThemePalette
     COLORREF sendTextColor;
     COLORREF receiveTextColor;
     COLORREF borderColor;
+    COLORREF buttonBackground;
+    COLORREF buttonHover;
+    COLORREF buttonPressed;
+    COLORREF buttonBorder;
+    COLORREF buttonText;
+    COLORREF buttonDisabled;
 };
 
 /// <summary>负责管理主对话框及业务逻辑。</summary>
@@ -87,12 +93,24 @@ private:
     void ApplyFlatBorderToWindow(HWND control, UINT_PTR subclassId = 0);
     /// <summary>绘制自定义线框。</summary>
     void DrawFlatBorder(HWND control) const;
+    /// <summary>为顶部控件设置紧凑尺寸。</summary>
+    void ApplyCompactControlMetrics();
+    /// <summary>重设控件高度。</summary>
+    void ResizeControlHeight(int controlId, int targetHeight);
+    /// <summary>绘制主题按钮。</summary>
+    bool DrawThemedButton(const DRAWITEMSTRUCT& dis) const;
     /// <summary>判断子类化 ID 是否对应下拉框。</summary>
     bool IsComboSubclassId(UINT_PTR subclassId) const;
+    /// <summary>判断子类化 ID 是否对应日志控件。</summary>
+    bool IsLogSubclassId(UINT_PTR subclassId) const;
     /// <summary>绘制扁平风格下拉框。</summary>
     void PaintFlatCombo(HWND combo, HDC targetDc) const;
     /// <summary>获取下拉框当前文本。</summary>
     std::wstring GetComboDisplayText(HWND combo) const;
+    /// <summary>填充日志控件背景。</summary>
+    void FillLogBackground(HWND logWindow, HDC targetDc) const;
+    /// <summary>按需构造紧凑字体。</summary>
+    HFONT ResolveCompactFont();
     static LRESULT CALLBACK FlatBorderSubclassProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR reference);
 
 private:
@@ -110,6 +128,8 @@ private:
     ThemePalette _palette;
     HBRUSH _dialogBrush;
     HBRUSH _controlBrush;
+    HBRUSH _logBrush;
+    HFONT _compactFont;
 };
 
 /// <summary>WinMain 入口。</summary>

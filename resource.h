@@ -20,7 +20,6 @@
 #define IDC_COMBO_PORT             1008
 #define IDC_BUTTON_CONNECT         1009
 #define IDC_STATUS_TEXT            1010
-#define IDC_BUTTON_RELOAD          1011
 #define IDC_COMBO_BAUD             1012
 #define IDC_BUTTON_CLEAR_LOG       1013
 #define IDC_COMBO_THEME             1014
